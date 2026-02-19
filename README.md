@@ -92,7 +92,7 @@ That's it. No Node, no Python, no npm install.
 
 If you commit frequently with descriptive messages — and you should — your git history is already the best documentation of what happened and why. `git-memory` just makes that history legible to your AI coding assistant at the moment it matters most: session start.
 
-*Ma ka hana ka ʻike* — In working, one learns. 🌺🤙🏼
+*Ma ka hana ka ʻike* — In working, one learns. 🌺🤙🏼🚀
 
 ---
 
