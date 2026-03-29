@@ -4,7 +4,7 @@
 
 set -euo pipefail
 
-VERSION="1.0.0"
+VERSION="1.1.0"
 DB_DIR=".ai"
 DB_PATH="$DB_DIR/memory.db"
 
@@ -232,7 +232,7 @@ cmd_status() {
 
 cmd_context() {
   ensure_db
-  local limit=20
+  local limit=15  # max meaningful commits shown (not raw commits scanned)
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --limit) limit="$2"; shift 2 ;;
@@ -259,36 +259,78 @@ cmd_context() {
   fi
   echo ""
 
-  # Hot files (last 50 commits)
+  # Hot files — exclude lockfiles and generated noise
   echo "## Hot Files (last 50 commits)"
   db <<'SQL'
-SELECT COUNT(*) as changes, file_path
+SELECT COUNT(*) as n, file_path
 FROM file_changes
 WHERE commit_hash IN (SELECT hash FROM commits ORDER BY ts DESC LIMIT 50)
-GROUP BY file_path ORDER BY changes DESC LIMIT 10;
+  AND file_path NOT LIKE '%package-lock.json'
+  AND file_path NOT LIKE '%yarn.lock'
+  AND file_path NOT LIKE '%Podfile.lock'
+  AND file_path NOT LIKE '%.lock'
+  AND file_path NOT LIKE '%.expo/%'
+  AND file_path NOT LIKE '%node_modules/%'
+  AND file_path NOT LIKE '%dist/%'
+  AND file_path NOT LIKE '%build/%'
+  AND file_path NOT IN ('app.json', 'package.json', '.gitignore')
+GROUP BY file_path ORDER BY n DESC LIMIT 10;
 SQL
   echo ""
 
-  # Active areas
+  # Active areas — same noise filter
   echo "## Active Areas"
-  db <<SQL
-SELECT COUNT(*) as changes,
+  db <<'SQL'
+SELECT COUNT(*) as n,
   CASE WHEN INSTR(file_path,'/') > 0
     THEN SUBSTR(file_path, 1, INSTR(file_path,'/') - 1)
     ELSE '(root)'
   END as area
 FROM file_changes
 WHERE commit_hash IN (SELECT hash FROM commits ORDER BY ts DESC LIMIT 50)
-GROUP BY area ORDER BY changes DESC LIMIT 8;
+  AND file_path NOT LIKE '%package-lock.json'
+  AND file_path NOT LIKE '%yarn.lock'
+  AND file_path NOT LIKE '%Podfile.lock'
+  AND file_path NOT LIKE '%.lock'
+  AND file_path NOT LIKE '%node_modules/%'
+GROUP BY area ORDER BY n DESC LIMIT 8;
 SQL
   echo ""
 
-  # Recent activity grouped by day
-  echo "## Recent Activity"
+  # Recent meaningful commits — filter noise, show feat/fix/refactor/perf
+  # Skips: merge commits, chore: bump/update/release, ci:, style:, build:, lockfile-only
+  echo "## Recent Feature Commits"
   db <<SQL
-SELECT DATE(ts, 'unixepoch', 'localtime') as day, COUNT(*) as n,
-  GROUP_CONCAT(SUBSTR(hash,1,7) || ' ' || SUBSTR(message,1,60), CHAR(10)) as commits
-FROM commits ORDER BY ts DESC LIMIT $limit;
+SELECT SUBSTR(hash,1,7) || ' ' || SUBSTR(message,1,72) as entry
+FROM commits
+WHERE (
+  -- include semantic feat/fix/refactor/perf/docs with substance
+  message LIKE 'feat%'
+  OR message LIKE 'fix%'
+  OR message LIKE 'refactor%'
+  OR message LIKE 'perf%'
+  OR message LIKE 'add %'
+  OR message LIKE 'Add %'
+  OR message LIKE 'implement%'
+  OR message LIKE 'Implement%'
+  OR message LIKE 'ship%'
+  OR message LIKE 'Ship%'
+  OR message LIKE 'update%'
+  OR message LIKE 'Update%'
+  OR message LIKE 'revert%'
+)
+  -- exclude obvious noise patterns
+  AND message NOT LIKE 'chore: bump%'
+  AND message NOT LIKE 'chore: update deps%'
+  AND message NOT LIKE 'chore: release%'
+  AND message NOT LIKE '%build number%'
+  AND message NOT LIKE 'Merge branch%'
+  AND message NOT LIKE 'Merge pull request%'
+  AND message NOT LIKE 'ci:%'
+  AND message NOT LIKE 'style:%'
+  AND message NOT LIKE 'update package%'
+  AND message NOT LIKE 'Update package%'
+ORDER BY ts DESC LIMIT $limit;
 SQL
 }
 
@@ -349,8 +391,14 @@ case "${1:-help}" in
     echo "  init              Create .ai/memory.db and index last 100 commits"
     echo "  index             Incremental index (new commits only)"
     echo "  status            Show index status and branch info"
-    echo "  context [--limit] Output project context for LLM sessions"
+    echo "  context [--limit N]  Output project context (default: 15 feature commits)"
     echo "  refresh-claude-md Update CLAUDE.md with project memory section"
     echo "  version           Show version"
+    echo ""
+    echo "v1.1.0 changes:"
+    echo "  - Recent Activity → Recent Feature Commits (filters noise commits)"
+    echo "  - Hot Files / Active Areas exclude lockfiles and generated noise"
+    echo "  - --limit N controls meaningful commits shown (not raw commits scanned)"
+    echo "  - Default limit: 15 (was 20 raw commits)"
     ;;
 esac
