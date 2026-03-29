@@ -1,38 +1,43 @@
-# git-memory
+# git-memory v1.1.0
 
-Git history as project memory. Indexes commits into SQLite so new Claude Code sessions can instantly understand a project's recent activity.
+Git history as lean project memory. Indexes commits into SQLite and generates a noise-filtered context section in CLAUDE.md so new Claude Code sessions start with signal, not commit dumps.
 
 ## When to Use
 - Starting a new CC session on any git repo
-- Asked about project history, recent changes, or active areas
-- Need to understand what's been happening in a codebase
+- Asked about recent project activity, hot files, or active areas
+- CLAUDE.md project memory section is stale or bloated
+- After a `/dream`-style cleanup, to prevent re-bloat
 
 ## Setup (once per repo)
 ```bash
 git-memory init
 ```
-Creates `.ai/memory.db` with the last ~100 commits indexed.
+Creates `.ai/memory.db` with the last ~100 commits indexed, installs SessionStart hook, writes first CLAUDE.md section.
 
-## Session Start (recommended)
+## Session Start (automated via hook)
 ```bash
 git-memory index && git-memory refresh-claude-md
 ```
-Incrementally indexes new commits, then updates CLAUDE.md with a `## Project Memory` section that CC reads automatically.
+Incremental — only processes new commits. Runs automatically on `SessionStart` after `init`.
 
 ## Commands
 | Command | Purpose |
 |---------|---------|
-| `init` | First-time setup, index last 100 commits |
-| `index` | Incremental update (fast, only new commits) |
+| `init` | First-time setup |
+| `index` | Incremental update (fast) |
 | `status` | What's indexed, branch info |
-| `context [--limit N]` | Output context for injection (hot files, recent activity, active areas) |
-| `refresh-claude-md` | Auto-update CLAUDE.md with project memory section |
+| `context [--limit N]` | Output context (default: 15 feature commits) |
+| `refresh-claude-md` | Regenerate CLAUDE.md section |
 
-## How It Works
-- Stores raw git data (no LLM summarization — commit messages are already good)
-- SQLite DB at `.ai/memory.db` (add `.ai/` to .gitignore)
-- Branch-aware: shows current branch, ahead/behind main
-- CLAUDE.md section uses markers so it only replaces its own content
+## What the Output Looks Like
+- **Hot Files** — top churned real code files (lockfiles/generated excluded)
+- **Active Areas** — top directories by activity
+- **Recent Feature Commits** — up to 15 `feat:`/`fix:`/`refactor:` commits; merge commits, build bumps, `ci:`, `style:` are filtered out
+
+## Noise Filtering (v1.1.0)
+Excluded from commits: merge commits, `chore: bump`, `chore: release`, `chore: update deps`, `ci:`, `style:`, build number bumps
+Excluded from files: `*.lock`, `package-lock.json`, `yarn.lock`, `Podfile.lock`, `node_modules/`, `dist/`, `build/`, `.expo/`, root `package.json`/`app.json`
 
 ## Dependencies
 - `git`, `sqlite3`, `bash` — nothing else
+- Script: `~/clawd/skills/git-memory/scripts/git-memory.sh`
