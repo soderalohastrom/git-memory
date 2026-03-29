@@ -340,33 +340,69 @@ cmd_refresh_claude_md() {
   local start_marker="<!-- git-memory:start -->"
   local end_marker="<!-- git-memory:end -->"
 
-  # Generate context
-  local context
-  context=$(cmd_context "$@")
-  local section
-  section=$(printf '%s\n## Project Memory (auto-generated)\n\n%s\n%s' "$start_marker" "$context" "$end_marker")
+  # Generate context into a temp file (avoids multiline variable quoting issues)
+  local tmp_ctx tmp_out
+  tmp_ctx=$(mktemp)
+  tmp_out=$(mktemp)
+  {
+    printf '%s\n' "$start_marker"
+    echo "## Project Memory (auto-generated)"
+    echo ""
+    cmd_context "$@"
+    printf '%s\n' "$end_marker"
+  } > "$tmp_ctx"
 
   if [[ ! -f "$claude_md" ]]; then
-    echo "$section" > "$claude_md"
+    mv "$tmp_ctx" "$claude_md"
     info "Created $claude_md with project memory"
     return
   fi
 
   # Check if markers exist
-  if grep -q "$start_marker" "$claude_md"; then
-    # Replace between markers (inclusive)
-    local tmp
-    tmp=$(mktemp)
-    awk -v start="$start_marker" -v end="$end_marker" -v replacement="$section" '
-      $0 == start { print replacement; skip=1; next }
-      $0 == end { skip=0; next }
-      !skip { print }
-    ' "$claude_md" > "$tmp"
-    mv "$tmp" "$claude_md"
+  if grep -qF "$start_marker" "$claude_md"; then
+    # Replace between markers (inclusive) using python3 for reliable multiline handling
+    python3 - "$claude_md" "$tmp_ctx" "$tmp_out" << 'PYEOF'
+import sys
+
+orig_path, new_section_path, out_path = sys.argv[1], sys.argv[2], sys.argv[3]
+START = "<!-- git-memory:start -->"
+END   = "<!-- git-memory:end -->"
+
+with open(orig_path) as f:
+    lines = f.read().splitlines(keepends=True)
+with open(new_section_path) as f:
+    replacement = f.read()
+
+out = []
+skip = False
+injected = False
+for line in lines:
+    stripped = line.rstrip('\n')
+    if stripped == START:
+        out.append(replacement if replacement.endswith('\n') else replacement + '\n')
+        skip = True
+        injected = True
+        continue
+    if stripped == END:
+        skip = False
+        continue
+    if not skip:
+        out.append(line)
+
+if not injected:
+    out.append('\n' + replacement)
+
+with open(out_path, 'w') as f:
+    f.writelines(out)
+PYEOF
+    mv "$tmp_out" "$claude_md"
+    rm -f "$tmp_ctx"
     info "Updated project memory section in $claude_md"
   else
     # Append
-    printf '\n%s\n' "$section" >> "$claude_md"
+    printf '\n' >> "$claude_md"
+    cat "$tmp_ctx" >> "$claude_md"
+    rm -f "$tmp_ctx"
     info "Appended project memory section to $claude_md"
   fi
 }
